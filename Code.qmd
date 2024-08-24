@@ -1,0 +1,428 @@
+---
+title: "Final Project"
+format: html
+editor: visual
+---
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+
+# Load the dataset
+data <- read.csv("climate_change_data.csv")
+
+# Convert Date to Date format
+data$Date <- as.Date(data$Date, format="%Y-%m-%d")
+
+# Handle missing values
+data <- na.omit(data)
+
+# Normalize data
+data_scaled <- data %>% 
+  mutate(across(c(Temperature, CO2.Emissions, Sea.Level.Rise, Precipitation, Humidity, Wind.Speed), scale))
+head(data)
+```
+
+```{r}
+# Generate future data
+future_data <- data.frame(
+  Date = seq(from = max(data$Date), by = "month", length.out = 24),
+  Temperature = c(20, 21, rep(mean(data$Temperature, na.rm = TRUE), 22)),
+  CO2.Emissions = c(400, 405, rep(mean(data$CO2.Emissions, na.rm = TRUE), 22)),
+  Precipitation = c(10, 12, rep(mean(data$Precipitation, na.rm = TRUE), 22)),
+  Humidity = c(60, 65, rep(mean(data$Humidity, na.rm = TRUE), 22)),
+  Wind.Speed = c(5, 6, rep(mean(data$Wind.Speed, na.rm = TRUE), 22))
+)
+
+# Convert Date to Date format
+future_data$Date <- as.Date(future_data$Date)
+
+```
+
+```{r}
+# Plot sea level rise over time
+ggplot(data, aes(x = Date, y = Sea.Level.Rise)) +
+  geom_line() +
+  labs(title = "Sea Level Rise Over Time", x = "Date", y = "Sea Level Rise (mm)")
+ggplot(data, aes(x = Country, y = Sea.Level.Rise)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "Sea Level Rise by Country", x = "Country", y = "Sea Level (mm)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+#To check whether co2 emissions can predict future temperature
+library(lmtest)
+
+# Convert data to time series
+temperature_ts <- ts(data$Temperature, start = c(year(min(data$Date)), month(min(data$Date))), frequency = 12)
+co2_ts <- ts(data$CO2.Emissions, start = c(year(min(data$Date)), month(min(data$Date))), frequency = 12)
+
+# Granger causality test
+grangertest(temperature_ts ~ co2_ts, order = 2)
+
+```
+
+```{r}
+# Correlation matrix
+corr_matrix <- cor(data %>% select(Temperature, CO2.Emissions, Sea.Level.Rise, Precipitation, Humidity, Wind.Speed))
+corrplot(corr_matrix, method = "circle")
+
+
+```
+
+```{r}
+# Loading necessary libraries
+library(forecast)
+library(prophet)
+library(cluster)
+library(factoextra)
+library(reshape2)
+
+```
+
+```{r}
+# Seasonal Decomposition of Time Series
+temperature_ts <- ts(data$Temperature, start = c(year(min(data$Date)), month(min(data$Date))), frequency = 12)
+decomp <- stl(temperature_ts, s.window = "periodic")
+plot(decomp)
+
+# Time Series Forecasting using Prophet
+data_prophet <- data %>%
+  select(Date, Temperature) %>%
+  rename(ds = Date, y = Temperature)
+m <- prophet(data_prophet)
+future <- make_future_dataframe(m, periods = 24, freq = "month")
+forecast <- predict(m, future)
+plot(m, forecast)
+prophet_plot_components(m, forecast)
+```
+
+```{r}
+# Clustering Analysis
+data_scaled <- data %>%
+  select(Temperature, CO2.Emissions, Sea.Level.Rise, Precipitation, Humidity, Wind.Speed) %>%
+  scale()
+set.seed(123)
+clusters <- kmeans(data_scaled, centers = 3)
+fviz_cluster(clusters, data = data_scaled, geom = "point")
+
+```
+
+```{r}
+# Principal Component Analysis (PCA)
+pca <- prcomp(data_scaled, center = TRUE, scale. = TRUE)
+fviz_eig(pca)
+fviz_pca_var(pca, col.var = "contrib", gradient.cols = c("blue", "green", "red"))
+
+```
+
+```{r}
+# Loading necessary libraries
+library(zoo)
+library(anomalize)
+if (!requireNamespace("changepoint", quietly = TRUE)) {
+  install.packages("changepoint")
+}
+
+library(changepoint)
+
+# Change Point Detection using PELT method
+cpt_temp <- cpt.meanvar(data$Temperature, method = "PELT")
+plot(cpt_temp)
+
+# Extracting change points
+change_points <- cpts(cpt_temp)
+change_points
+
+
+```
+
+```{r}
+# Anomaly Detection using IQR method
+detect_anomalies <- function(x) {
+  q25 <- quantile(x, 0.25)
+  q75 <- quantile(x, 0.75)
+  iqr <- q75 - q25
+  lower_bound <- q25 - 1.5 * iqr
+  upper_bound <- q75 + 1.5 * iqr
+  which(x < lower_bound | x > upper_bound)
+}
+anomalies <- lapply(data %>% select(Temperature, CO2.Emissions, Sea.Level.Rise, Precipitation, Humidity, Wind.Speed), detect_anomalies)
+anomalies
+
+
+```
+
+```{r}
+# Loading necessary libraries
+library(zoo)
+library(anomalize)
+library(changepoint)
+
+# Anomaly Detection using IQR method
+detect_anomalies <- function(x) {
+  q25 <- quantile(x, 0.25)
+  q75 <- quantile(x, 0.75)
+  iqr <- q75 - q25
+  lower_bound <- q25 - 1.5 * iqr
+  upper_bound <- q75 + 1.5 * iqr
+  which(x < lower_bound | x > upper_bound)
+}
+anomalies <- lapply(data %>% select(Temperature, CO2.Emissions, Sea.Level.Rise, Precipitation, Humidity, Wind.Speed), detect_anomalies)
+anomalies
+
+# Rolling Window Analysis
+# Compute rolling statistics
+rolling_mean <- rollapply(data$Temperature, width = 12, FUN = mean, by = 1, align = "right", fill = NA, na.rm = TRUE)
+rolling_sd <- rollapply(data$Temperature, width = 12, FUN = sd, by = 1, align = "right", fill = NA, na.rm = TRUE)
+
+# Add rolling statistics to the original data
+data <- data %>%
+  mutate(rolling_mean_temp = rolling_mean,
+         rolling_sd_temp = rolling_sd)
+
+# Cross-Correlation Analysis
+ccf_temp_co2 <- ccf(data$Temperature, data$CO2.Emissions, lag.max = 24, plot = FALSE)
+ccf_temp_precip <- ccf(data$Temperature, data$Precipitation, lag.max = 24, plot = FALSE)
+
+# Time Series Decomposition and Recomposition
+temperature_ts <- ts(data$Temperature, start = c(year(min(data$Date)), month(min(data$Date))), frequency = 12)
+decompose_ts <- decompose(temperature_ts, type = "multiplicative")
+trend <- decompose_ts$trend
+seasonal <- decompose_ts$seasonal
+random <- decompose_ts$random
+
+# Using decomposed components for predictive modeling
+trend_model <- lm(trend ~ time(trend))
+seasonal_model <- lm(seasonal ~ time(seasonal))
+random_model <- lm(random ~ time(random))
+
+trend_pred <- predict(trend_model, newdata = data.frame(time = seq_along(trend)))
+seasonal_pred <- predict(seasonal_model, newdata = data.frame(time = seq_along(seasonal)))
+random_pred <- predict(random_model, newdata = data.frame(time = seq_along(random)))
+
+recomposed_ts <- trend_pred * seasonal_pred * random_pred
+
+# Change Point Detection using the changepoint package
+cpt_temp <- cpt.meanvar(data$Temperature, method = "PELT")
+plot(cpt_temp)
+
+# Extract change points
+change_points <- cpts(cpt_temp)
+
+
+
+
+```
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+
+# Prepare the data
+data_lr <- data %>%
+    select(Temperature, CO2.Emissions, Precipitation, Humidity, Wind.Speed, Sea.Level.Rise)
+
+# Train the linear regression model
+lr_model <- lm(Sea.Level.Rise ~ ., data = data_lr)
+
+# Display the model summary
+summary(lr_model)
+
+# Plotting the fitted values vs actual values
+ggplot(data_lr, aes(x = Sea.Level.Rise, y = predict(lr_model))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Actual vs Fitted Values", x = "Actual Sea Level Rise", y = "Fitted Sea Level Rise") +
+  theme_minimal()
+
+# Residuals plot to check for homoscedasticity
+ggplot(data_lr, aes(x = predict(lr_model), y = residuals(lr_model))) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(title = "Residuals vs Fitted Values", x = "Fitted Sea Level Rise", y = "Residuals") +
+  theme_minimal()
+
+```
+
+```{r}
+# Load necessary libraries
+library(randomForest)
+
+# Prepare the data
+data_rf <- data %>% select(Temperature, CO2.Emissions, Precipitation, Humidity, Wind.Speed, Sea.Level.Rise)
+
+# Train a Random Forest model
+rf_model <- randomForest(Sea.Level.Rise ~ ., data = data_rf, importance = TRUE, ntree = 500)
+
+# Display feature importance
+importance(rf_model)
+varImpPlot(rf_model)
+
+```
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(Metrics)
+
+# Prepare the data
+data_lr <- data %>%
+    select(Temperature, CO2.Emissions, Precipitation, Humidity, Wind.Speed, Sea.Level.Rise)
+
+# Train the linear regression model
+lr_model <- lm(Sea.Level.Rise ~ ., data = data_lr)
+
+# Make predictions
+predictions <- predict(lr_model, newdata = data_lr)
+
+# Print lengths to check for consistency
+print(length(predictions))
+print(length(data$Sea.Level.Rise))
+
+# Calculate RMSE
+rmse_value <- rmse(data$Sea.Level.Rise, predictions)
+
+# Calculate MAE
+mae_value <- mae(data$Sea.Level.Rise, predictions)
+
+# Calculate R-squared manually
+ss_total <- sum((data$Sea.Level.Rise - mean(data$Sea.Level.Rise))^2)
+ss_residual <- sum((data$Sea.Level.Rise - predictions)^2)
+r_squared <- 1 - (ss_residual / ss_total)
+
+# Print the results
+cat("RMSE:", rmse_value, "\n")
+cat("MAE:", mae_value, "\n")
+cat("R-squared:", r_squared, "\n")
+
+
+```
+
+```{r}
+# Linear regression
+model <- lm(Sea.Level.Rise ~ Temperature + CO2.Emissions + Precipitation + Humidity + Wind.Speed, data = data)
+summary(model)
+
+# Predictions
+future_pred_data <- data.frame(
+  Temperature = c(20, 21),
+  CO2.Emissions = c(400, 405),
+  Precipitation = c(10, 12),
+  Humidity = c(60, 65),
+  Wind.Speed = c(5, 6)
+)
+predictions <- predict(model, newdata = future_data)
+```
+
+```{r}
+# Load necessary library
+library(rpart)
+
+# Fit a Decision Tree model
+tree_model <- rpart(Sea.Level.Rise ~ ., data = data)
+
+# Predictions on the test data
+predictions_tree <- predict(tree_model, data)
+
+# Calculate RMSE, MAE, and R-squared for the decision tree model
+rmse_tree <- rmse(data$Sea.Level.Rise, predictions_tree)
+mae_tree <- mae(data$Sea.Level.Rise, predictions_tree)
+r_squared_tree <- 1 - sum((data$Sea.Level.Rise - predictions_tree)^2) / sum((data$Sea.Level.Rise - mean(data$Sea.Level.Rise))^2)
+
+# Print the results
+cat("Decision Tree Regression Model\n")
+cat("RMSE:", rmse_tree, "\n")
+cat("MAE:", mae_tree, "\n")
+cat("R-squared:", r_squared_tree, "\n")
+
+```
+
+```{r}
+# Load necessary libraries
+library(shiny)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+
+data <- tibble(
+  Date = seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month"),
+  Location = sample(c("Urban", "Rural"), length(seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month")), replace = TRUE),
+  Country = sample(c("USA", "Canada", "Brazil", "Australia"), length(seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month")), replace = TRUE),
+  Temperature = runif(length(seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month")), min = -30, max = 50),
+  CO2_Emissions = runif(length(seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month")), min = 100, max = 1000),
+  Sea_Level_Rise = runif(length(seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month")), min = 0, max = 100),
+  Humidity = runif(length(seq(as.Date("2000-01-01"), as.Date("2023-12-31"), by = "month")), min = 20, max = 100)
+)
+
+# Define UI for the application
+ui <- fluidPage(
+  titlePanel("Environmental Dashboard"),
+  sidebarLayout(
+    sidebarPanel(
+      dateRangeInput("dateRange", "Select Date Range", start = min(data$Date), end = max(data$Date)),
+      selectInput("country", "Select Country", choices = unique(data$Country), selected = unique(data$Country)[1]),
+      selectInput("location", "Select Location", choices = unique(data$Location), selected = unique(data$Location)[1]),
+      selectInput("measurement", "Select Measurement", choices = c("Temperature", "CO2_Emissions", "Sea_Level_Rise", "Humidity")),
+      downloadButton("downloadData", "Download Data")
+    ),
+    mainPanel(
+      plotOutput("mainPlot"),
+      tableOutput("summaryTable"),
+      leafletOutput("map")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output) {
+  
+  filtered_data <- reactive({
+    data %>%
+      filter(Date >= input$dateRange[1], Date <= input$dateRange[2],
+             Country == input$country, Location == input$location)
+  })
+  
+  output$mainPlot <- renderPlot({
+    ggplot(filtered_data(), aes(x = Date, y = !!sym(input$measurement))) +
+      geom_line() +
+      labs(title = paste(input$measurement, "Over Time"), x = "Date", y = input$measurement) +
+      theme_minimal()
+  })
+  
+  output$summaryTable <- renderTable({
+    filtered_data() %>%
+      summarise(
+        Mean = mean(!!sym(input$measurement), na.rm = TRUE),
+        Median = median(!!sym(input$measurement), na.rm = TRUE),
+        SD = sd(!!sym(input$measurement), na.rm = TRUE)
+      )
+  })
+  
+  output$map <- renderLeaflet({
+    leaflet() %>%
+      addTiles() %>%
+      addMarkers(lng = runif(5, -180, 180), lat = runif(5, -90, 90), popup = "Sample Location")
+  })
+  
+  output$downloadData <- downloadHandler(
+    filename = function() {
+      paste("filtered_data_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      write.csv(filtered_data(), file, row.names = FALSE)
+    }
+  )
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+
+```
